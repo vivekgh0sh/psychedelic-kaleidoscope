@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Psychedelic Infinity — Hypnotic Tiling Kaleidoscope</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    #app {
+      position: fixed;
+      inset: 0;
+    }
+    .ui {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      z-index: 4;
+      pointer-events: none;
+    }
+    .pill {
+      pointer-events: auto;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      backdrop-filter: blur(6px) saturate(125%);
+      cursor: pointer;
+      user-select: none;
+      transition: transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+    }
+    .pill:hover {
+      transform: translateY(-1px);
+      background: rgba(255,255,255,0.12);
+      border-color: rgba(255,255,255,0.4);
+      box-shadow: 0 6px 24px rgba(0,0,0,0.25), 0 0 18px rgba(255,0,255,0.25), inset 0 0 12px rgba(0,255,255,0.12);
+    }
+    .label {
+      pointer-events: none;
+      opacity: 0.7;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+    }
+    .footer {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      mix-blend-mode: screen;
+      pointer-events: none;
+      z-index: 3;
+      color: #e7fff9;
+      text-shadow: 0 0 10px rgba(0,255,200,0.2);
+    }
+    .brand {
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      font-size: 12px;
+      user-select: none;
+    }
+    .hint {
+      font-size: 12px;
+      opacity: 0.75;
+      max-width: 60ch;
+      text-align: right;
+    }
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(1200px 800px at 50% 50%, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.25) 70%, rgba(0,0,0,0.7) 100%);
+      mix-blend-mode: multiply;
+      z-index: 2;
+    }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div class="vignette"></div>
+
+  <div class="ui">
+    <div class="pill" id="btnMode">Mode: Kaleido</div>
+    <div class="pill" id="btnPulse">Pulse</div>
+    <div class="label" id="status">∞</div>
+  </div>
+
+  <div class="footer">
+    <div class="brand">PSYCHETILE ∞</div>
+    <div class="hint">Drag to swirl time • Scroll to zoom • [1] Mode • [Space] Pulse • [S] Spin</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    // Renderer
+    const app = document.getElementById('app');
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    app.appendChild(renderer.domElement);
+
+    // Fullscreen tri
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+      -1, -1, 0,
+       3, -1, 0,
+      -1,  3, 0
+    ]), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([
+      0,0, 2,0, 0,2
+    ]), 2));
+
+    // Utility GLSL
+    const GLSL = {
+      hash: `
+        float hash(float n){ return fract(sin(n)*43758.5453123); }
+        float hash2(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1)))*43758.5453); }
+      `,
+      n2d: `
+        float n2d(vec2 p){
+          vec2 i=floor(p), f=fract(p);
+          vec2 u=f*f*(3.0-2.0*f);
+          float a=hash2(i+vec2(0,0));
+          float b=hash2(i+vec2(1,0));
+          float c=hash2(i+vec2(0,1));
+          float d=hash2(i+vec2(1,1));
+          return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+        }
+      `,
+      fbm: `
+        float fbm(vec2 p){
+          float s=0.0, a=0.5;
+          for(int i=0;i<6;i++){
+            s += a*n2d(p);
+            p = mat2(1.6,1.2,-1.2,1.6)*p;
+            a *= 0.55;
+          }
+          return s;
+        }
+      `,
+      hue: `
+        vec3 h2rgb(float h){
+          vec3 rgb = clamp(abs(mod(h*6.0 + vec3(0,4,2), 6.0) - 3.0)-1.0, 0.0, 1.0);
+          return rgb*rgb*(3.0-2.0*rgb);
+        }
+      `
+    };
+
+    // Shader material: psychedelic infinite tiling + kaleidoscope
+    const uniforms = {
+      uTime: { value: 0 },
+      uZoom: { value: 1.0 },
+      uSpin: { value: 0.0 },
+      uPulse: { value: 0.0 },
+      uMode: { value: 0 }, // 0 kaleido, 1 rosette, 2 tunnel
+      uInvert: { value: 1 },
+      uResolution: { value: new THREE.Vector2(innerWidth, innerHeight) }
+    };
+
+    const material = new THREE.ShaderMaterial({
+      uniforms,
+      vertexShader: `
+        varying vec2 vUv;
+        void main(){
+          vUv = uv;
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+        varying vec2 vUv;
+        uniform vec2 uResolution;
+        uniform float uTime, uZoom, uSpin, uPulse;
+        uniform int uMode;
+        uniform int uInvert;
+
+        ${GLSL.hash}
+        ${GLSL.n2d}
+        ${GLSL.fbm}
+        ${GLSL.hue}
+
+        mat2 rot(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }
+
+        vec2 kaleido(vec2 p, float n){
+          float a = atan(p.y, p.x);
+          float r = length(p);
+          float m = 6.28318530718 / n;
+          a = abs(mod(a, m) - m*0.5);
+          return vec2(cos(a), sin(a)) * r;
+        }
+
+        vec2 tileWarp(vec2 p, float t){
+          p *= 1.0 + 0.25*sin(t*0.31) + 0.25*sin(t*0.21 + 1.7);
+          p = rot(0.2*sin(t*0.17))*p;
+          vec2 q = p;
+          q.x += fbm(p*0.6 + vec2(t*0.07, -t*0.05))*2.0;
+          q.y += fbm(p*0.6 + vec2(-t*0.05, t*0.07))*2.0;
+          p += 0.35*vec2(sin(q.y*1.8 + t*0.9), cos(q.x*1.6 - t*0.7));
+          p = fract(p) - 0.5;
+          return p;
+        }
+
+        vec3 trip(vec2 p, float t){
+          float d = length(p);
+          float w = fbm(p*2.0 + vec2(t*0.2, -t*0.23));
+          float r = 0.7 + 0.3*sin(6.0*d - t*1.7 + w*6.0);
+          float g = 0.7 + 0.3*sin(6.0*d - t*1.7 + w*6.0 + 2.094);
+          float b = 0.7 + 0.3*sin(6.0*d - t*1.7 + w*6.0 + 4.188);
+          vec3 col = vec3(r,g,b);
+          float ring = smoothstep(0.0, 0.008, abs(sin(d*20.0 - t*3.0)));
+          col += ring*0.6;
+          col *= 0.9 + 0.6*pow(max(0.0, 1.0 - d), 2.0);
+          return col;
+        }
+
+        vec3 bloom(vec2 p, vec3 col){
+          float d = length(p);
+          float g = smoothstep(0.85, 0.0, d);
+          return col + col * g * 0.75;
+        }
+
+        void main(){
+          vec2 uv = (gl_FragCoord.xy / uResolution.xy);
+          vec2 p = (uv - 0.5);
+          p.x *= uResolution.x / uResolution.y;
+
+          float t = uTime;
+          float pulse = uPulse;
+
+          float zoom = uZoom * (1.0 + 0.18*sin(t*0.9) + 0.22*pulse);
+          p *= rot(uSpin*0.2 + 0.15*sin(t*0.33));
+          p *= 1.2 + 0.6*sin(t*0.27 + length(p)*0.6 + pulse*0.8);
+          p *= 1.0 / zoom;
+
+          vec2 w = tileWarp(p*2.0, t);
+
+          if (uMode == 0) {
+            vec2 k = kaleido(w, 8.0 + 4.0*sin(t*0.2));
+            vec3 col = trip(k*2.0, t);
+            col = bloom(k, col);
+            col += 0.25*vec3(
+              sin(3.0*k.x + 5.0*k.y + t*1.2),
+              sin(4.0*k.x - 3.0*k.y - t*1.4 + 2.09),
+              sin(5.0*k.x + 2.0*k.y + t*1.6 + 4.18)
+            );
+            if (uInvert == 1) col = 1.0 - col;
+            vec2 off = (p) * 0.003 * (1.0 + 0.6*sin(t*0.7));
+            vec3 ch;
+            ch.r = col.r;
+            ch.g = trip(k + off, t).g;
+            ch.b = trip(k - off, t).b;
+            col = mix(col, ch, 0.65);
+            gl_FragColor = vec4(pow(col, vec3(1.1)), 1.0);
+          } else if (uMode == 1) {
+            float a = atan(w.y, w.x);
+            float r = length(w);
+            float petals = 7.0 + 3.0*sin(t*0.33);
+            float lace = 0.5 + 0.5*sin(a*petals + r*22.0 - t*2.0);
+            float orb = smoothstep(0.0, 0.02, abs(sin(r*30.0 - t*3.0)));
+            vec3 base = h2rgb(fract(0.2 + 0.15*sin(t*0.31) + a/6.2831)) * (0.6 + 0.6*lace);
+            base += orb * 0.8;
+            base *= 1.0 + 0.4*sin(r*12.0 + t*1.1);
+            base = bloom(w, base);
+            if (uInvert == 1) base = 1.0 - base;
+            gl_FragColor = vec4(base, 1.0);
+          } else {
+            float r = length(w);
+            float a = atan(w.y, w.x);
+            float bands = 8.0 + 4.0*sin(t*0.21);
+            float z = fract(t*0.08 + r*0.35);
+            float ring = smoothstep(0.02, 0.0, abs(fract(r*bands - t*0.6) - 0.5));
+            float spin = 0.5 + 0.5*sin(a*10.0 + t*2.0 + r*8.0);
+            vec3 col = h2rgb(fract(z + 0.33*sin(a*2.0) + 0.5*spin));
+            col *= 0.5 + 0.9*ring;
+            col += 0.25*pow(1.0 - r, 3.0);
+            col = bloom(w, col);
+            if (uInvert == 1) col = 1.0 - col;
+            gl_FragColor = vec4(col, 1.0);
+          }
+        }
+      `,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    const mesh = new THREE.Mesh(geo, material);
+    scene.add(mesh);
+
+    // Controls/state
+    const state = {
+      time: 0,
+      pulse: 0,
+      zoom: 1.0,
+      spin: 0.0,
+      mode: 0,
+      invert: 1,
+      dragging: false,
+      last: new THREE.Vector2()
+    };
+
+    // UI elements
+    const btnMode = document.getElementById('btnMode');
+    const btnPulse = document.getElementById('btnPulse');
+    const status = document.getElementById('status');
+
+    function updateLabels() {
+      btnMode.textContent = 'Mode: ' + (state.mode === 0 ? 'Kaleido' : state.mode === 1 ? 'Rosette' : 'Tunnel');
+      status.textContent = `Zoom ${state.zoom.toFixed(2)} • Spin ${state.spin.toFixed(2)} • ${state.invert ? 'Inverted' : 'Normal'}`;
+    }
+
+    btnMode.addEventListener('click', () => {
+      state.mode = (state.mode + 1) % 3;
+      uniforms.uMode.value = state.mode;
+      updateLabels();
+      boom(0.9);
+    });
+    btnPulse.addEventListener('click', () => boom(1.0));
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === '1') {
+        state.mode = (state.mode + 1) % 3;
+        uniforms.uMode.value = state.mode;
+        updateLabels();
+        boom(0.9);
+      } else if (e.code === 'Space') {
+        boom(1.0);
+      } else if (e.key.toLowerCase() === 's') {
+        state.spin += 0.5;
+      }
+    });
+
+    // Pointer interactions
+    const dom = renderer.domElement;
+    dom.addEventListener('pointerdown', (e) => {
+      state.dragging = true;
+      state.last.set(e.clientX, e.clientY);
+      boom(0.5);
+    });
+    dom.addEventListener('pointerup', () => state.dragging = false);
+    dom.addEventListener('pointerleave', () => state.dragging = false);
+    dom.addEventListener('pointermove', (e) => {
+      if (!state.dragging) return;
+      const dx = (e.clientX - state.last.x) / innerWidth;
+      const dy = (e.clientY - state.last.y) / innerHeight;
+      state.last.set(e.clientX, e.clientY);
+      state.spin += dx * 2.0;
+      state.zoom = Math.max(0.2, Math.min(3.0, state.zoom - dy * 1.5));
+      updateLabels();
+    });
+    dom.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = Math.sign(e.deltaY);
+      state.zoom = Math.max(0.2, Math.min(4.0, state.zoom + delta * 0.08));
+      updateLabels();
+    }, { passive: false });
+
+    // Pulse bloom function
+    function boom(str = 1.0) {
+      state.pulse = Math.min(1.0, state.pulse + 0.8 * str);
+    }
+
+    // Resize
+    window.addEventListener('resize', () => {
+      renderer.setSize(innerWidth, innerHeight);
+      uniforms.uResolution.value.set(innerWidth, innerHeight);
+    });
+
+    // Animate
+    const clock = new THREE.Clock();
+    function tick() {
+      requestAnimationFrame(tick);
+      const dt = Math.min(clock.getDelta(), 0.033);
+      state.time += dt;
+
+      if (state.pulse > 0) {
+        state.pulse = Math.max(0, state.pulse - dt * 0.9);
+      }
+
+      state.spin += dt * 0.12 * (1.0 + 0.5*Math.sin(state.time*0.37));
+      state.zoom = 1.0 + 0.15*Math.sin(state.time*0.21);
+
+      uniforms.uTime.value = state.time;
+      uniforms.uZoom.value = state.zoom;
+      uniforms.uSpin.value = state.spin;
+      uniforms.uPulse.value = state.pulse;
+      uniforms.uMode.value = state.mode;
+      uniforms.uInvert.value = state.invert;
+
+      renderer.render(scene, camera);
+    }
+    updateLabels();
+    boom(1.0);
+    tick();
+  </script>
+</body>
+</html>
